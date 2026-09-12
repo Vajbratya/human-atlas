@@ -41,4 +41,124 @@ export const EXPLANATIONS:Record<string,string> = {
  'trachea':'The main airway connecting the larynx to the bronchi. Its cartilage supports keep the airway open during breathing.',
  'diaphragm':'A broad muscle separating the chest and abdomen. When it contracts, it increases chest volume and helps draw air into the lungs.',
 };
-export function explanation(name:string,system:SystemId){return EXPLANATIONS[name.toLowerCase()] ?? SYSTEMS.find(s=>s.id===system)?.description ?? '';}
+
+/** Compact educational context for reading named anatomy on CT. It adds no diagnostic thresholds or management rules. */
+export interface ReportingContext {landmarks:string[];variants:string[];focus:string[]}
+const REPORTING_CONTEXT:Record<string,ReportingContext> = {
+ brain:{
+  landmarks:['cerebral hemispheres and falx','ventricular system and basal ganglia','posterior fossa and basal cisterns'],
+  variants:['cavum septi pellucidi or cavum vergae','developmental ventricular asymmetry'],
+  focus:['side and compartment','mass effect and ventricular configuration','relationship to the skull base or posterior fossa when relevant'],
+ },
+ heart:{
+  landmarks:['four chambers','atrioventricular grooves','aortic root, pulmonary trunk, and caval inflow'],
+  variants:['persistent left superior vena cava may alter venous anatomy','right-sided aortic arch changes the expected great-vessel relationship'],
+  focus:['which chamber or great vessel is involved','pericardial relationship','adjacent coronary or mediastinal anatomy when visible'],
+ },
+ liver:{
+  landmarks:['portal veins, hepatic veins, and inferior vena cava','falciform ligament and porta hepatis','right and left lobar anatomy with Couinaud segmental orientation'],
+  variants:['Riedel lobe','accessory hepatic fissures or lobulation'],
+  focus:['lobe or segment','relationship to portal and hepatic veins','biliary or capsular relationship when relevant'],
+ },
+ gallbladder:{
+  landmarks:['fundus, body, and neck','gallbladder fossa on the inferior liver surface','expected course toward the cystic duct'],
+  variants:['Phrygian-cap fold','folded or partially intrahepatic configuration'],
+  focus:['anatomic portion involved','relationship to the liver and bile ducts','wall and surrounding fat on cross-sectional imaging'],
+ },
+ spleen:{
+  landmarks:['splenic hilum','left hemidiaphragm and splenic flexure','pancreatic tail and left kidney'],
+  variants:['accessory spleen','persistent fetal lobulation'],
+  focus:['location within the spleen','hilar or capsular relationship','relationship to pancreatic tail and left kidney'],
+ },
+ pancreas:{
+  landmarks:['head, uncinate process, neck, body, and tail','superior mesenteric vessels behind the neck and uncinate region','splenic vein along the posterior body and tail'],
+  variants:['pancreas divisum','annular pancreas'],
+  focus:['pancreatic portion','main duct and biliary relationship','relationship to mesenteric or splenic vessels'],
+ },
+ kidney:{
+  landmarks:['upper and lower poles with renal sinus','renal hilum and vessels','collecting system and ureteropelvic junction'],
+  variants:['duplicated collecting system','horseshoe kidney','persistent fetal lobulation'],
+  focus:['side and pole','cortical, sinus, or collecting-system location','relationship to the hilum and renal vessels'],
+ },
+ adrenal:{
+  landmarks:['body with medial and lateral limbs','diaphragmatic crura posteriorly','right adrenal next to the inferior vena cava and left adrenal beside the aorta'],
+  variants:['shape and limb prominence vary normally','accessory adrenal tissue may occur along the embryologic gonadal descent pathway'],
+  focus:['side and adrenal limb or body','relationship to kidney, crus, and major vessels','whether a finding is centered in the gland'],
+ },
+ aorta:{
+  landmarks:['ascending aorta, arch, and descending thoracic aorta','diaphragmatic hiatus and abdominal aorta','celiac, superior mesenteric, renal, and iliac branch levels'],
+  variants:['common origin of the brachiocephalic and left common carotid arteries','left vertebral artery arising directly from the arch'],
+  focus:['anatomic segment','branch-vessel relationship','adjacent mediastinal or retroperitoneal structures'],
+ },
+ 'inferior vena cava':{
+  landmarks:['infrarenal and suprarenal segments','renal vein confluence','hepatic segment entering the right atrium'],
+  variants:['duplicated inferior vena cava','left-sided inferior vena cava','azygos continuation'],
+  focus:['segment and side','renal and hepatic venous relationship','relationship to the aorta and retroperitoneum'],
+ },
+ portal:{
+  landmarks:['splenic vein and superior mesenteric vein confluence','main portal vein at the porta hepatis','right and left intrahepatic portal branches'],
+  variants:['early branching or trifurcation of the main portal vein','variant confluence with the inferior mesenteric vein'],
+  focus:['main, right, or left portal distribution','relationship to the biliary tree and hepatic artery','splenic and mesenteric venous confluence'],
+ },
+ lung:{
+  landmarks:['lobar fissures','main and lobar bronchi','hilar pulmonary arteries and veins'],
+  variants:['azygos lobe','accessory or incomplete fissures'],
+  focus:['side, lobe, and segment when possible','pleural or fissural relationship','hilar and bronchovascular relationship'],
+ },
+ trachea:{
+  landmarks:['cervical and intrathoracic trachea','carina','right and left main bronchi'],
+  variants:['tracheal bronchus','accessory cardiac bronchus'],
+  focus:['level relative to the thoracic inlet and carina','relationship to esophagus and mediastinal vessels','main-bronchus extension when relevant'],
+ },
+ vertebra:{
+  landmarks:['vertebral body and endplates','pedicles, laminae, facets, and spinous process','spinal canal and neural foramina'],
+  variants:['lumbosacral transitional vertebra','cervical rib or rudimentary rib','developmental segmentation anomalies'],
+  focus:['exact vertebral level','body versus posterior-element location','spinal canal or neural-foraminal relationship'],
+ },
+ rib:{
+  landmarks:['posterior costovertebral articulation','rib angle and shaft','anterior costochondral junction'],
+  variants:['cervical rib','bifid rib','rudimentary or absent twelfth rib'],
+  focus:['side and rib number','anterior, lateral, or posterior arc','relationship to pleura and adjacent vertebra'],
+ },
+ 'urinary bladder':{
+  landmarks:['dome, body, base, and trigone','ureterovesical junctions','relationship to prostate or pelvic reproductive organs'],
+  variants:['urachal remnant at the dome','variable contour with degree of distension'],
+  focus:['wall region or intraluminal location','relationship to ureteric orifices and pelvic organs','degree of distension when it changes interpretation'],
+ },
+};
+
+const REPORTING_FAMILIES:[RegExp,string][] = [
+ [/^(left|right) kidney$/,'kidney'],
+ [/^(left|right) adrenal gland$/,'adrenal'],
+ [/^.*lung$|^.* lobe$/,'lung'],
+ [/^.*vertebra( \([ctls]\d+\))?$/i,'vertebra'],
+ [/^.* rib$/,'rib'],
+ [/^portal and splenic veins$/,'portal'],
+];
+
+function reportingKey(name:string){
+ const key=name.toLowerCase();
+ if(REPORTING_CONTEXT[key])return key;
+ return REPORTING_FAMILIES.find(([pattern])=>pattern.test(key))?.[1] ?? '';
+}
+
+export function reportingContext(name:string):ReportingContext|null{
+ const key=reportingKey(name);
+ return key?REPORTING_CONTEXT[key]??null:null;
+}
+
+export function reportingNote(name:string){
+ const context=reportingContext(name);
+ if(!context)return '';
+ return [
+  `Clinical landmarks — ${context.landmarks.join('; ')}.`,
+  `Variants to recognize — ${context.variants.join('; ')}.`,
+  `Reporting focus — ${context.focus.join('; ')}.`,
+ ].join(' ');
+}
+
+export function explanation(name:string,system:SystemId){
+ const base=EXPLANATIONS[name.toLowerCase()] ?? SYSTEMS.find(s=>s.id===system)?.description ?? '';
+ const reporting=reportingNote(name);
+ return reporting?`${base} ${reporting}`:base;
+}
